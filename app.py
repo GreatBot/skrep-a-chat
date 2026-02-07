@@ -7,10 +7,11 @@ import streamlit as st
 
 DEFAULT_TIMEOUT_S = 45
 
-st.set_page_config(page_title="Support Chat", page_icon="💬")
+st.set_page_config(page_title="Skrepa Chat", page_icon="💬")
 
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT_TEMPLATE = """
 You are a regulated-environment support assistant.
+You MUST respond in {language}.
 
 Return ONLY valid JSON with this exact shape:
 {
@@ -44,6 +45,7 @@ Rules:
 - For short_text fields, only request short identifiers like first name, policy number fragment, etc.
 - If no form is needed, return requested_form as null.
 - If chat can finish, set final true and next_choices may be empty.
+- Do not repeat the user's latest message at the start of assistant_message.
 """.strip()
 
 
@@ -87,19 +89,33 @@ def _normalize_model_output(raw_content: str) -> dict[str, Any]:
     }
 
 
-def _api_messages(chat_history: list[dict[str, str]]) -> list[dict[str, str]]:
-    return [{"role": "system", "content": SYSTEM_PROMPT}, *chat_history]
+def _api_messages(chat_history: list[dict[str, str]], language: str) -> list[dict[str, str]]:
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(language=language)
+    return [{"role": "system", "content": system_prompt}, *chat_history]
+
+
+def _strip_leading_echo(user_text: str, assistant_text: str) -> str:
+    user_clean = user_text.strip()
+    assistant_clean = assistant_text.strip()
+    if not user_clean or not assistant_clean:
+        return assistant_text
+
+    if assistant_clean.lower().startswith(user_clean.lower()):
+        trimmed = assistant_clean[len(user_clean) :].lstrip(" .,:;!?-\n")
+        return trimmed or assistant_text
+    return assistant_text
 
 
 def _call_chat_completion(
     api_url: str,
     api_token: str,
     model: str,
+    language: str,
     chat_history: list[dict[str, str]],
 ) -> dict[str, Any]:
     payload = {
         "model": model,
-        "messages": _api_messages(chat_history),
+        "messages": _api_messages(chat_history, language),
         "temperature": 0.2,
     }
     headers = {"Content-Type": "application/json"}
@@ -209,9 +225,20 @@ def _render_form(requested_form: dict[str, Any]) -> dict[str, Any] | None:
 
 def _trigger_assistant_turn(api_url: str, token: str, model: str):
     with st.spinner("Thinking…"):
-        result = _call_chat_completion(api_url, token, model, st.session_state.chat_history)
+        result = _call_chat_completion(
+            api_url,
+            token,
+            model,
+            st.session_state.response_language,
+            st.session_state.chat_history,
+        )
 
     assistant_text = result["assistant_message"].strip() or "I can help you continue with structured choices."
+    last_user_message = next(
+        (message["content"] for message in reversed(st.session_state.chat_history) if message["role"] == "user"),
+        "",
+    )
+    assistant_text = _strip_leading_echo(last_user_message, assistant_text)
     st.session_state.chat_history.append({"role": "assistant", "content": assistant_text})
     st.session_state.pending_choices = result["next_choices"]
     st.session_state.pending_form = result["requested_form"]
@@ -219,40 +246,62 @@ def _trigger_assistant_turn(api_url: str, token: str, model: str):
 
 
 with st.sidebar:
-    st.header("LLM Setup")
-    api_url = st.text_input("Chat Completion API URL", value="https://api.openai.com/v1/chat/completions")
-    api_token = st.text_input("API Token", type="password")
-    model = st.text_input("Model", value="gpt-4o-mini")
+    st.title("Skrepa Chat")
 
-    st.divider()
-    title_text = st.text_input("Chat title", value="Support Assistant", max_chars=40)
-    description_text = st.text_input("Chat description", value="Guided support with no free text.", max_chars=40)
+    title_text = st.text_input("Chat title", value="Support Assistant")
+    description_text = st.text_area(
+        "Chat description",
+        value="**Guided support** with no free text.",
+        help="Markdown is supported and will be shown in the main chat window.",
+    )
     require_terms = st.checkbox("Accept terms before start", value=False)
     terms_text = st.text_input(
         "Terms checkbox label",
         value="I accept the terms and conditions.",
-        max_chars=40,
         placeholder="I accept the terms and conditions.",
     )
     greeting_text = st.text_input(
         "Greeting message",
         value="Hi, I can help using guided options.",
-        max_chars=40,
     )
     starters_raw = st.text_area(
         "Starter questions (one per line)",
         value="Billing help\nUpdate contact details\nCheck application status",
         help="Users choose one starter to begin.",
     )
+    response_language = st.selectbox(
+        "Response language",
+        options=[
+            "English",
+            "Russian",
+            "Mandarin Chinese",
+            "Hindi",
+            "Spanish",
+            "French",
+            "Modern Standard Arabic",
+            "Bengali",
+            "Portuguese",
+            "Urdu",
+            "German",
+        ],
+        index=0,
+    )
 
     if st.button("Reset conversation", use_container_width=True):
         _reset_conversation()
         st.rerun()
 
+    st.divider()
+    st.header("Connection")
+    api_url = st.text_input("Chat Completion API URL", value="https://api.openai.com/v1/chat/completions")
+    api_token = st.text_input("API Token", type="password")
+    model = st.text_input("Model", value="gpt-4o-mini")
+
 _init_state()
+st.session_state.response_language = response_language
 
 st.title(title_text)
-st.caption(description_text)
+st.markdown(description_text)
 
 if require_terms:
     accepted_now = st.checkbox(terms_text or "I accept the terms and conditions.", value=st.session_state.accepted_terms)
@@ -269,7 +318,22 @@ starters = [line.strip() for line in starters_raw.splitlines() if line.strip()]
 
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        content = message["content"]
+        if message["role"] == "user" and content.startswith("FORM_SUBMISSION: "):
+            payload_text = content.replace("FORM_SUBMISSION: ", "", 1)
+            try:
+                payload = json.loads(payload_text)
+            except json.JSONDecodeError:
+                st.markdown("Form submitted.")
+                with st.expander("Form submitted"):
+                    st.code(payload_text, language="json")
+            else:
+                friendly_lines = [f"**{str(key).replace('_', ' ').title()}:** {value}" for key, value in payload.items()]
+                st.markdown("\n".join(friendly_lines))
+                with st.expander("Form submitted"):
+                    st.code(json.dumps(payload, ensure_ascii=False, indent=2), language="json")
+        else:
+            st.markdown(content)
 
 if len(st.session_state.chat_history) == 1 and starters:
     selected_starter = st.pills("Choose a starter question", starters, selection_mode="single")
@@ -305,6 +369,9 @@ if st.session_state.pending_form and not st.session_state.conversation_done:
 if st.session_state.conversation_done:
     with st.container():
         st.success("Conversation completed.")
+        feedback = st.feedback("thumbs", key="conversation_feedback")
+        if feedback is not None:
+            st.caption("Thanks for your feedback.")
         if st.button("Start new conversation"):
             _reset_conversation()
             st.rerun()
