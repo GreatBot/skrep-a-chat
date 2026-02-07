@@ -5,7 +5,9 @@ from typing import Any
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="Regulated Support Chat POC", page_icon="💬", layout="wide")
+DEFAULT_TIMEOUT_S = 45
+
+st.set_page_config(page_title="Support Chat", page_icon="💬")
 
 SYSTEM_PROMPT = """
 You are a regulated-environment support assistant.
@@ -28,7 +30,7 @@ Return ONLY valid JSON with this exact shape:
         "options": ["string"],
         "min": 0,
         "max": 100,
-        "max_length": 80
+        "max_length": 40
       }
     ]
   },
@@ -37,7 +39,7 @@ Return ONLY valid JSON with this exact shape:
 
 Rules:
 - Never ask user for free-form long text.
-- Keep next_choices concise and actionable, typically 2-6 options.
+- Keep next_choices concise and actionable, prefer 1-5 words per option.
 - Use requested_form only when structured input is needed.
 - For short_text fields, only request short identifiers like first name, policy number fragment, etc.
 - If no form is needed, return requested_form as null.
@@ -94,7 +96,6 @@ def _call_chat_completion(
     api_token: str,
     model: str,
     chat_history: list[dict[str, str]],
-    timeout_s: int,
 ) -> dict[str, Any]:
     payload = {
         "model": model,
@@ -105,7 +106,7 @@ def _call_chat_completion(
     if api_token.strip():
         headers["Authorization"] = f"Bearer {api_token.strip()}"
 
-    response = requests.post(api_url, headers=headers, json=payload, timeout=timeout_s)
+    response = requests.post(api_url, headers=headers, json=payload, timeout=DEFAULT_TIMEOUT_S)
     response.raise_for_status()
     data = response.json()
 
@@ -116,15 +117,27 @@ def _call_chat_completion(
     return _normalize_model_output(str(content))
 
 
-def _init_state(greeting: str):
+def _reset_conversation():
+    for key in ["chat_history", "pending_choices", "pending_form", "conversation_done", "accepted_terms"]:
+        st.session_state.pop(key, None)
+
+
+def _init_state():
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [{"role": "assistant", "content": greeting}]
+        st.session_state.chat_history = []
     if "pending_choices" not in st.session_state:
         st.session_state.pending_choices = []
     if "pending_form" not in st.session_state:
         st.session_state.pending_form = None
     if "conversation_done" not in st.session_state:
         st.session_state.conversation_done = False
+    if "accepted_terms" not in st.session_state:
+        st.session_state.accepted_terms = False
+
+
+def _ensure_greeting(greeting: str):
+    if not st.session_state.chat_history:
+        st.session_state.chat_history = [{"role": "assistant", "content": greeting}]
 
 
 def _render_form(requested_form: dict[str, Any]) -> dict[str, Any] | None:
@@ -147,12 +160,11 @@ def _render_form(requested_form: dict[str, Any]) -> dict[str, Any] | None:
             required = bool(field.get("required", False))
 
             if field_type == "short_text":
-                max_length = int(field.get("max_length", 80))
                 values[key] = st.text_input(
                     label,
                     help=help_text,
                     placeholder=str(field.get("placeholder", "")),
-                    max_chars=max(1, min(max_length, 120)),
+                    max_chars=40,
                 )
             elif field_type == "number":
                 values[key] = st.number_input(
@@ -195,9 +207,9 @@ def _render_form(requested_form: dict[str, Any]) -> dict[str, Any] | None:
     return values
 
 
-def _trigger_assistant_turn(api_url: str, token: str, model: str, timeout_s: int):
+def _trigger_assistant_turn(api_url: str, token: str, model: str):
     with st.spinner("Thinking…"):
-        result = _call_chat_completion(api_url, token, model, st.session_state.chat_history, timeout_s)
+        result = _call_chat_completion(api_url, token, model, st.session_state.chat_history)
 
     assistant_text = result["assistant_message"].strip() or "I can help you continue with structured choices."
     st.session_state.chat_history.append({"role": "assistant", "content": assistant_text})
@@ -206,38 +218,54 @@ def _trigger_assistant_turn(api_url: str, token: str, model: str, timeout_s: int
     st.session_state.conversation_done = result["final"]
 
 
-st.title("💬 Regulated Support Chat (POC)")
-st.caption("No free-form chat input: users proceed with pills and structured form controls.")
-
 with st.sidebar:
     st.header("LLM Setup")
     api_url = st.text_input("Chat Completion API URL", value="https://api.openai.com/v1/chat/completions")
     api_token = st.text_input("API Token", type="password")
     model = st.text_input("Model", value="gpt-4o-mini")
-    timeout_s = st.slider("Request timeout (seconds)", min_value=10, max_value=120, value=45)
 
     st.divider()
-    title_text = st.text_input("Chat title", value="Support Assistant")
-    greeting_text = st.text_area(
+    title_text = st.text_input("Chat title", value="Support Assistant", max_chars=40)
+    description_text = st.text_input("Chat description", value="Guided support with no free text.", max_chars=40)
+    require_terms = st.checkbox("Accept terms before start", value=False)
+    terms_text = st.text_input(
+        "Terms checkbox label",
+        value="I accept the terms and conditions.",
+        max_chars=40,
+        placeholder="I accept the terms and conditions.",
+    )
+    greeting_text = st.text_input(
         "Greeting message",
-        value="Hi, I can help you with account and service requests using guided options.",
-        max_chars=280,
+        value="Hi, I can help using guided options.",
+        max_chars=40,
     )
     starters_raw = st.text_area(
         "Starter questions (one per line)",
-        value="I need help with billing\nI need to update my contact details\nI want to check application status",
-        help="Users choose one starter to begin. You can provide a long list.",
+        value="Billing help\nUpdate contact details\nCheck application status",
+        help="Users choose one starter to begin.",
     )
 
     if st.button("Reset conversation", use_container_width=True):
-        for key in ["chat_history", "pending_choices", "pending_form", "conversation_done"]:
-            st.session_state.pop(key, None)
+        _reset_conversation()
         st.rerun()
 
-_init_state(greeting_text)
-starters = [line.strip() for line in starters_raw.splitlines() if line.strip()]
+_init_state()
 
-st.subheader(title_text)
+st.title(title_text)
+st.caption(description_text)
+
+if require_terms:
+    accepted_now = st.checkbox(terms_text or "I accept the terms and conditions.", value=st.session_state.accepted_terms)
+    st.session_state.accepted_terms = accepted_now
+else:
+    st.session_state.accepted_terms = True
+
+if not st.session_state.accepted_terms:
+    st.info("Please accept terms and conditions to start the chat.")
+    st.stop()
+
+_ensure_greeting(greeting_text)
+starters = [line.strip() for line in starters_raw.splitlines() if line.strip()]
 
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
@@ -248,7 +276,7 @@ if len(st.session_state.chat_history) == 1 and starters:
     if selected_starter:
         st.session_state.chat_history.append({"role": "user", "content": selected_starter})
         try:
-            _trigger_assistant_turn(api_url, api_token, model, timeout_s)
+            _trigger_assistant_turn(api_url, api_token, model)
             st.rerun()
         except Exception as exc:
             st.error(f"Chat completion request failed: {exc}")
@@ -258,7 +286,7 @@ if st.session_state.pending_choices and not st.session_state.conversation_done:
     if selected_choice:
         st.session_state.chat_history.append({"role": "user", "content": selected_choice})
         try:
-            _trigger_assistant_turn(api_url, api_token, model, timeout_s)
+            _trigger_assistant_turn(api_url, api_token, model)
             st.rerun()
         except Exception as exc:
             st.error(f"Chat completion request failed: {exc}")
@@ -269,10 +297,14 @@ if st.session_state.pending_form and not st.session_state.conversation_done:
         user_payload = json.dumps(form_values, ensure_ascii=False)
         st.session_state.chat_history.append({"role": "user", "content": f"FORM_SUBMISSION: {user_payload}"})
         try:
-            _trigger_assistant_turn(api_url, api_token, model, timeout_s)
+            _trigger_assistant_turn(api_url, api_token, model)
             st.rerun()
         except Exception as exc:
             st.error(f"Chat completion request failed: {exc}")
 
 if st.session_state.conversation_done:
-    st.success("Conversation completed. You can reset to start again.")
+    with st.container():
+        st.success("Conversation completed.")
+        if st.button("Start new conversation"):
+            _reset_conversation()
+            st.rerun()
