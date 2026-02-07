@@ -1,13 +1,14 @@
-# Streamlit Hello World
+# Regulated Support Chat POC (Streamlit)
 
-A minimal Streamlit app configured for **Streamlit Community Cloud** deployment.
+A one-page Streamlit demo proving a **no-free-text chat UX** can still be flexible with LLM-driven flow.
 
-## Project files
+## Highlights
 
-- `app.py` — hello-world Streamlit app.
-- `requirements.txt` — Python dependencies installed by Streamlit Cloud.
-- `runtime.txt` — Python runtime version for reproducible deploys.
-- `.streamlit/config.toml` — app theme and UI defaults.
+- Sidebar setup for OpenAI-compatible chat completions (`url`, token, model).
+- Configurable chat title, description, greeting, starter questions.
+- Optional **Accept terms before start** gate on the main page.
+- Guided user interaction with `st.pills` choices and structured forms.
+- No free-form chat input; structured fields only.
 
 ## Run locally
 
@@ -18,21 +19,6 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Deploy to Streamlit Community Cloud
+## Deployment
 
-1. Push this repository to GitHub.
-2. Open [share.streamlit.io](https://share.streamlit.io/) and sign in with GitHub.
-3. Select **Create app** (or **New app**).
-4. Configure:
-   - **Repository:** this repo
-   - **Branch:** your deployment branch (usually `main`)
-   - **Main file path:** `app.py`
-5. Click **Deploy**.
-
-Streamlit Community Cloud will automatically read `requirements.txt` and `runtime.txt` during build.
-
-## Optional next steps
-
-- Add widgets and charts.
-- Add `.streamlit/secrets.toml` values from the Cloud app settings (do not commit secrets).
-- Add tests/linting in CI before deployment.
+Use `app.py` as the entrypoint in Streamlit Community Cloud.
