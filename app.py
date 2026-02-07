@@ -11,7 +11,7 @@ st.set_page_config(page_title="Skrepa Chat", page_icon="💬")
 
 SYSTEM_PROMPT_TEMPLATE = """
 You are a regulated-environment support assistant.
-You MUST respond in {language}.
+You MUST respond in __LANGUAGE__.
 
 Return ONLY valid JSON with this exact shape:
 {
@@ -90,20 +90,8 @@ def _normalize_model_output(raw_content: str) -> dict[str, Any]:
 
 
 def _api_messages(chat_history: list[dict[str, str]], language: str) -> list[dict[str, str]]:
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(language=language)
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.replace("__LANGUAGE__", language)
     return [{"role": "system", "content": system_prompt}, *chat_history]
-
-
-def _strip_leading_echo(user_text: str, assistant_text: str) -> str:
-    user_clean = user_text.strip()
-    assistant_clean = assistant_text.strip()
-    if not user_clean or not assistant_clean:
-        return assistant_text
-
-    if assistant_clean.lower().startswith(user_clean.lower()):
-        trimmed = assistant_clean[len(user_clean) :].lstrip(" .,:;!?-\n")
-        return trimmed or assistant_text
-    return assistant_text
 
 
 def _call_chat_completion(
@@ -234,11 +222,6 @@ def _trigger_assistant_turn(api_url: str, token: str, model: str):
         )
 
     assistant_text = result["assistant_message"].strip() or "I can help you continue with structured choices."
-    last_user_message = next(
-        (message["content"] for message in reversed(st.session_state.chat_history) if message["role"] == "user"),
-        "",
-    )
-    assistant_text = _strip_leading_echo(last_user_message, assistant_text)
     st.session_state.chat_history.append({"role": "assistant", "content": assistant_text})
     st.session_state.pending_choices = result["next_choices"]
     st.session_state.pending_form = result["requested_form"]
