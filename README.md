@@ -1,13 +1,31 @@
-# Streamlit Hello World
+# Regulated Support Chat POC (Streamlit)
 
-A minimal Streamlit app configured for **Streamlit Community Cloud** deployment.
+A one-page Streamlit demo that proves a **no-free-text chat UX** can still be flexible by letting an LLM drive:
 
-## Project files
+- next-step button/pill choices,
+- dynamic structured forms,
+- and conversation flow.
 
-- `app.py` — hello-world Streamlit app.
-- `requirements.txt` — Python dependencies installed by Streamlit Cloud.
-- `runtime.txt` — Python runtime version for reproducible deploys.
-- `.streamlit/config.toml` — app theme and UI defaults.
+The app connects to any **OpenAI Chat Completions API-compatible** endpoint.
+
+## What this demo does
+
+- Sidebar config for:
+  - Chat Completions API URL
+  - API token
+  - Model name
+  - Chat title and greeting
+  - Starter questions list
+- Uses `st.pills` for guided choice-based interaction (single-select).
+- Supports LLM-driven form collection via structured field definitions.
+- Prevents long free-form user input in the chat body.
+
+## Files
+
+- `app.py` — full Streamlit app.
+- `requirements.txt` — runtime dependencies.
+- `runtime.txt` — Python runtime version for deployment.
+- `.streamlit/config.toml` — Streamlit UI config.
 
 ## Run locally
 
@@ -18,21 +36,17 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Deploy to Streamlit Community Cloud
+## Expected LLM behavior
 
-1. Push this repository to GitHub.
-2. Open [share.streamlit.io](https://share.streamlit.io/) and sign in with GitHub.
-3. Select **Create app** (or **New app**).
-4. Configure:
-   - **Repository:** this repo
-   - **Branch:** your deployment branch (usually `main`)
-   - **Main file path:** `app.py`
-5. Click **Deploy**.
+The app sends a system instruction asking the model to return JSON with:
 
-Streamlit Community Cloud will automatically read `requirements.txt` and `runtime.txt` during build.
+- `assistant_message`
+- `next_choices`
+- `requested_form` (or `null`)
+- `final`
 
-## Optional next steps
+This allows the model to decide whether to continue with pills or request structured inputs.
 
-- Add widgets and charts.
-- Add `.streamlit/secrets.toml` values from the Cloud app settings (do not commit secrets).
-- Add tests/linting in CI before deployment.
+## Deploy
+
+Deploy directly to Streamlit Community Cloud using `app.py` as the main entry point.
